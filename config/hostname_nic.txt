@@ -1,0 +1,7 @@
+abilene01 eno1
+abilene03 em1
+abilene04 eno1
+abilene05 em1
+abilene06 em1
+abilene07 em1
+abilene08 em1
