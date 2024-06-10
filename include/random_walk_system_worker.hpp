@@ -48,6 +48,9 @@ public :
     // RWer 生成 & 処理をする関数
     void generateRWerForMain();
 
+    // cache 補充用 RWer 生成
+    void generateRWerForCache();
+
     // RW を実行する関数
     void executeRandomWalk(std::unique_ptr<RandomWalker>&& RWer_ptr, StdRandNumGenerator& gen);
 
@@ -72,6 +75,9 @@ public :
     // IPv4 サーバソケットを生成 (TCP)
     int createTcpServerSocket(const uint16_t& port_num);
 
+    // 実験結果を start_manager に送信する関数
+    void sendToStartManager();
+
 private :
 
     std::string hostname_; // 自サーバのホスト名
@@ -84,13 +90,19 @@ private :
     MessageQueue<RandomWalker>* RWer_queue_; // ポート番号毎の receive キュー
     MessageQueue<RandomWalker>* send_queue_; // 送信先毎の send キュー
     StartFlag start_flag_; // 実験開始の合図に関する情報
+    StartFlag start_cache_flag_; // cache 実行開始の合図に関する情報
     RandomWalkConfig RW_config_; // Random Walk 実行関連の設定
     RandomWalkerManager RW_manager_; // RWer に関する情報
+    host_id_t startmanagerip_; // StartManager の IP アドレス
 
     // 送信スレッドの送信先決定用
     host_id_t id_num_ = 0;
     std::mutex mtx_id_num_;
     std::atomic_bool* watching_queue_flag_;
+
+    // 再送制御用 
+    std::vector<std::thread> re_send_threads_;
+    uint32_t re_send_count = 0;
 
 };
 
@@ -173,7 +185,22 @@ inline RandomWalkSystemWorker::RandomWalkSystemWorker(const std::string& dir_pat
 }
 
 inline void RandomWalkSystemWorker::start() {
+    std::thread thread_generateRWer(&RandomWalkSystemWorker::generateRWerForMain, this);
+    std::thread thread_generateRWerCache(&RandomWalkSystemWorker::generateRWerForCache, this);
 
+    std::vector<std::thread> threads_sendMessage;
+    for (int i = 0; i < SEND_QUEUE_NUM; i++) {
+        if (i == hostid_) continue;
+        threads_sendMessage.emplace_back(std::thread(&RandomWalkSystemWorker::sendMessage, this, i));
+    }
+
+    std::vector<std::thread> threads_receiveMessage;
+    for (int i = 0; i < RECV_PORT; i++) {
+        threads_receiveMessage.emplace_back(std::thread(&RandomWalkSystemWorker::receiveMessage, this, 10000+i));
+    }
+
+    // プログラムを終了させないようにする
+    thread_generateRWer.join();
 }
 
 inline void RandomWalkSystemWorker::generateRWerForMain() {
@@ -245,6 +272,133 @@ inline void RandomWalkSystemWorker::generateRWerForMain() {
     }
 
     delete[] randgen;
+}
+
+inline void RandomWalkSystemWorker::generateRWerForCache() {
+    std::cout << "generateRWerForCache" << std::endl;
+
+    uint64_t number_of_my_vertices = graph_.getMyVerticesNum();
+    std::vector<vertex_id_t> my_vertices = graph_.getMyVertices();
+
+    // procMessage スレッドを生成
+    PROC_MESSAGE_FLAG = true;
+    std::vector<std::thread> threads_procMessage;
+    for (int i = 0; i < PROC_MESSAGE_CACHE_THREAD_NUM; i++) {
+        threads_procMessage.emplace_back(std::thread(&RandomWalkSystemWorker::procMessage, this, i));
+    }
+
+    start_cache_flag_.lockWhileFalse();
+
+    Timer timer;
+    uint32_t RWer_id_all;
+    #pragma omp parallel num_threads(GENERATE_RWER_CACHE)
+    {
+        worker_id_t worker_id = omp_get_thread_num();
+        StdRandNumGenerator gen;
+        walker_id_t RWer_id = worker_id;
+        walker_id_t sleep_threashold = RW_STEP;
+
+        while (CACHE_GEN_FLAG) {
+
+            vertex_id_t node_id = my_vertices[RWer_id % number_of_my_vertices];
+
+            // 歩数を生成
+            uint16_t life = RW_config_.getRWerLife(gen);
+
+            // RWer を生成
+            std::unique_ptr<RandomWalker> RWer_ptr(new RandomWalker(node_id, graph_.getDegree(node_id), RWer_id, hostid_, life));
+
+            // RW を実行 
+            executeRandomWalk(std::move(RWer_ptr), gen);
+
+            RWer_id += GENERATE_RWER_CACHE_THREAD_NUM;
+            if (RWer_id >= MAX_RWER_NUM_FOR_CACHE) break;
+            if (RWer_id >= sleep_threashold) {
+                // debug
+                std::cout << "RWer_id: " << RWer_id << ", sleep" << std::endl;
+
+                std::this_thread::sleep_for(std::chrono::seconds(GENERATE_SLEEP_TIME));
+
+                sleep_threashold += RW_STEP;
+
+                // debug
+                std::cout << "start" << std::endl;
+                std::cout << "cache count: " << cache_.getEdgeCount() << std::endl;
+            }
+        }
+
+        // debug 
+        std::cout << RWer_id << std::endl;
+        RWer_id_all = RWer_id;
+    }
+
+    double execution_time = timer.duration();
+    std::cout << "ex_time: " << execution_time << ", cache_size: " << cache_.getEdgeCount() << ", RWer_id_all: " << RWer_id_all << std::endl;
+
+    StdRandNumGenerator gen;
+    std::this_thread::sleep_for(std::chrono::seconds(gen.gen(5)));
+
+    // startmanager に結果送信
+    {
+        // ソケットの生成
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) { // エラー処理
+            perror("socket");
+            exit(1); // 異常終了
+        }
+        std::cout << sockfd << std::endl;
+
+        // アドレスの生成
+        struct sockaddr_in addr; // 接続先の情報用の構造体(ipv4)
+        memset(&addr, 0, sizeof(struct sockaddr_in)); // memsetで初期化
+        addr.sin_family = AF_INET; // アドレスファミリ(ipv4)
+        addr.sin_port = htons(9999); // ポート番号, htons()関数は16bitホストバイトオーダーをネットワークバイトオーダーに変換
+        addr.sin_addr.s_addr = startmanagerip_; // IPアドレス, inet_addr()関数はアドレスの翻訳
+
+        // ソケット接続要求
+        connect(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr_in)); // ソケット, アドレスポインタ, アドレスサイズ
+        std::cout << "connect" << std::endl;
+
+        // データ送信 (hostip: 4B, execution_time: 8B)
+        char message[MESSAGE_MAX_LENGTH_SEND];
+        int idx = 0;
+        memcpy(message + idx, &hostip_, sizeof(uint32_t)); idx += sizeof(uint32_t);
+        // memcpy(message + idx, &execution_time, sizeof(double)); idx += sizeof(double);
+        memcpy(message + idx, &RWer_id_all, sizeof(uint32_t)); idx += sizeof(uint32_t);
+        send(sockfd, message, sizeof(message), 0); // 送信
+        std::cout << "send" << std::endl;
+
+        // ソケットクローズ
+        close(sockfd); 
+    }
+
+    // 全てのサーバで終了した確認
+    {
+        int sockfd = createTcpServerSocket(9999); // サーバソケットを生成 (TCP)
+
+        struct sockaddr_in get_addr; // 接続相手のソケットアドレス
+        socklen_t len = sizeof(struct sockaddr_in); // 接続相手のアドレスサイズ
+        int connect = accept(sockfd, (struct sockaddr *)&get_addr, &len); // 接続待ちソケット, 接続相手のソケットアドレスポインタ, 接続相手のアドレスサイズ
+        if (connect < 0) { // エラー処理
+            perror("accept");
+            exit(1); // 異常終了
+        }       
+
+        char message[1024]; // 受信バッファ
+        memset(message, 0, sizeof(message)); // 受信バッファ初期化
+        recv(connect, message, sizeof(message), 0); // 受信 
+
+        close(sockfd);
+    }
+
+    // procMessageスレッドを終了させる
+    PROC_MESSAGE_FLAG = false;
+    for (int i = 0; i < PROC_MESSAGE_CACHE_THREAD_NUM; i++) {
+        std::unique_ptr<RandomWalker> RWer_ptr(new RandomWalker(DUMMY));
+        RWer_queue_[i].push(std::move(RWer_ptr));
+        threads_procMessage[i].join();
+    }
+    std::cout << "PROC_MESSAGE join !" << std::endl;
 }
 
 inline void RandomWalkSystemWorker::executeRandomWalk(std::unique_ptr<RandomWalker>&& RWer_ptr, StdRandNumGenerator& gen) {
@@ -509,6 +663,62 @@ inline void RandomWalkSystemWorker::receiveMessage(const uint16_t& port_num) {
     int sockfd = createUdpServerSocket(port_num);
 
     StdRandNumGenerator gen;
+
+    while (1) {
+        // messageを受信
+        char message[MESSAGE_MAX_LENGTH_RECV];
+        memset(message, 0, MESSAGE_MAX_LENGTH_RECV);
+        recv(sockfd, message, MESSAGE_MAX_LENGTH_RECV, 0);
+
+        uint8_t ver_id = *(uint8_t*)message;
+
+        if ((ver_id & MASK_MESSEGEID) == START_EXP) { // 実験開始の合図
+
+            uint32_t startmanager_ip = *(uint32_t*)(message + sizeof(ver_id));
+            uint32_t num_RWer = *(uint32_t*)(message + sizeof(ver_id) + sizeof(startmanager_ip));
+
+            startmanagerip_ = startmanager_ip;
+            RW_config_.setNumberOfRWExecution(num_RWer);
+
+            // debug
+            std::cout << "num_RWer = " << num_RWer << std::endl;
+
+            MAIN_EX = true;
+            CHECK_RWER_FLAG = false;
+
+            // 実験開始のフラグを立てる
+            start_flag_.writeReady(true);
+
+        } else if ((ver_id & MASK_MESSEGEID) == RWERS) { // RWer のメッセージ
+            // message に入っている RWer の数を確認
+            int idx = sizeof(uint8_t);
+            uint16_t RWer_count = *(uint16_t*)(message + idx); idx += sizeof(uint16_t);
+
+            std::vector<std::unique_ptr<RandomWalker>> RWer_ptr_vec(RWer_count);
+
+            for (int i = 0; i < RWer_count; i++) {
+                // std::unique_ptr<RandomWalker> RWer_ptr(new RandomWalker(message + idx));
+                RWer_ptr_vec[i] = std::make_unique<RandomWalker>(message + idx);
+                idx += RWer_ptr_vec[i]->getRWerSize();
+            }
+
+            // まとめて RWer キューに push
+            if (MAIN_EX) RWer_queue_[gen.gen(PROC_MESSAGE_THREAD_NUM)].push(RWer_ptr_vec);
+            else RWer_queue_[gen.gen(PROC_MESSAGE_CACHE_THREAD_NUM)].push(RWer_ptr_vec);
+
+        } else if ((ver_id & MASK_MESSEGEID) == CACHE_GEN) { // キャッシュ生成用の RW 実行
+
+            startmanagerip_ = *(uint32_t*)(message + sizeof(ver_id));
+            MAIN_EX = false;
+            CHECK_RWER_FLAG = true;
+            CACHE_GEN_FLAG = true;
+            start_cache_flag_.writeReady(true);
+
+        } else {
+            perror("wrong id");
+            exit(1); // 異常終了
+        }
+    }
 }
 
 inline int RandomWalkSystemWorker::createUdpServerSocket(const uint16_t& port_num) {
@@ -571,3 +781,65 @@ inline int RandomWalkSystemWorker::createTcpServerSocket(const uint16_t& port_nu
 
     return sockfd;
 }
+
+inline void RandomWalkSystemWorker::sendToStartManager() {
+    // start manager に送信するのは, RW 終了数, 実行時間
+    uint32_t end_count = RW_manager_.getEndcnt();
+    double execution_time = RW_manager_.getExecutionTime();
+    std::cout << "end_count : " << end_count << std::endl;
+    std::cout << "execution_time : " << execution_time << std::endl;
+
+    // debug
+    std::cout << "RWer_queue_size: " << PROC_MESSAGE_THREAD_NUM << std::endl;
+    for (int i = 0; i < PROC_MESSAGE_THREAD_NUM; i++) {
+        std::cout << i << ": " << RWer_queue_[i].getSize() << std::endl;
+    }
+    std::cout << "send_queue_size: " << SEND_QUEUE_NUM << std::endl;
+    for (int i = 0; i < SEND_QUEUE_NUM; i++) {
+        std::cout << i << ": " << send_queue_[i].getSize() << std::endl;
+    }
+    std::cout << "re_send_count: " << re_send_count << std::endl;
+    std::cout << "my edges num: " << graph_.getEdgeCount() << std::endl;
+    std::cout << "cache edges num: " << cache_.getEdgeCount() << std::endl;
+    std::cout << "all edges: " << graph_.getEdgeCount() + cache_.getEdgeCount() << std::endl;
+
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    {
+        // ソケットの生成
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) { // エラー処理
+            perror("socket");
+            exit(1); // 異常終了
+        }
+
+        // アドレスの生成
+        struct sockaddr_in addr; // 接続先の情報用の構造体(ipv4)
+        memset(&addr, 0, sizeof(struct sockaddr_in)); // memsetで初期化
+        addr.sin_family = AF_INET; // アドレスファミリ(ipv4)
+        addr.sin_port = htons(9999); // ポート番号, htons()関数は16bitホストバイトオーダーをネットワークバイトオーダーに変換
+        addr.sin_addr.s_addr = startmanagerip_; // IPアドレス, inet_addr()関数はアドレスの翻訳
+
+        // ソケット接続要求
+        connect(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr_in)); // ソケット, アドレスポインタ, アドレスサイズ
+
+        // データ送信 (hostip: 4B, end_count: 4B, all_execution_time: 8B)
+        char message[MESSAGE_MAX_LENGTH_SEND];
+        int idx = 0;
+        memcpy(message + idx, &hostip_, sizeof(uint32_t)); idx += sizeof(uint32_t);
+        memcpy(message + idx, &end_count, sizeof(uint32_t)); idx += sizeof(uint32_t);
+        memcpy(message + idx, &execution_time, sizeof(double)); idx += sizeof(double);
+        memcpy(message + idx, &re_send_count, sizeof(uint32_t)); idx += sizeof(uint32_t);
+        send(sockfd, message, sizeof(message), 0); // 送信
+
+        // ソケットクローズ
+        close(sockfd); 
+    }
+
+    // // 再送用スレッドを停止させる
+    // for (std::thread& th : re_send_threads_) {
+    //     th.join();
+    // }
+    // re_send_threads_.clear();
+
+}
+

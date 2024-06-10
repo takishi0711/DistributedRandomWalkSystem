@@ -60,8 +60,8 @@ struct Edge <EmptyData>
 
 struct Edge_dstIp
 {
-    uint32_t src;
-    uint32_t dst;
+    vertex_id_t src;
+    vertex_id_t dst;
     uint8_t dst_ip;
 
     Edge_dstIp() {}

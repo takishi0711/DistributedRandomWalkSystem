@@ -26,7 +26,7 @@ class Graph {
     // 自サーバが持ち主となる頂点集合を入手
     std::vector<vertex_id_t> getMyVertices();
 
-    // 頂点の持ち主の IP アドレスを入手
+    // 頂点の持ち主の HostID を入手
     host_id_t getHostId(const vertex_id_t& node_id);
 
     // 頂点の次数を入手
@@ -41,6 +41,9 @@ class Graph {
     // 頂点 u, v を受け取り, u[x] = v の x を返す (index を返す)
     // 頂点 u が自分のサーバのものでない場合は INF を返す
     index_t indexOfUV(const vertex_id_t& node_id_u, const vertex_id_t& node_id_v);
+
+    // グラフのエッジカウント 
+    edge_id_t getEdgeCount();
 
     private:
 
@@ -150,4 +153,8 @@ inline index_t Graph::indexOfUV(const vertex_id_t& node_id_u, const vertex_id_t&
     }
     index_t idx = std::lower_bound(adjacency_list_[node_id_u].begin(), adjacency_list_[node_id_u].end(), node_id_v) - adjacency_list_[node_id_u].begin();
     return idx;
+}
+
+inline edge_id_t Graph::getEdgeCount() {
+    return edge_count_;
 }

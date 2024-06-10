@@ -47,6 +47,9 @@ public :
     // インデックス情報を登録
     void registerIndex(const vertex_id_t& node_id_u, const vertex_id_t& node_id_v, const index_t& index_num);
 
+    // キャッシュのエッジカウント 
+    edge_id_t getEdgeCount();
+
 private :
 
     // キャッシュ情報
@@ -146,4 +149,8 @@ inline void Cache::registerDegree(const vertex_id_t& node_id, const index_t& deg
 
 inline void Cache::registerIndex(const vertex_id_t& node_id_u, const vertex_id_t& node_id_v, const index_t& index_num) {
     adjacency_list_.setIndex(node_id_u, index_num, node_id_v);
+}
+
+inline edge_id_t Cache::getEdgeCount() {
+    return adjacency_list_.getSize();
 }

@@ -26,6 +26,10 @@ public :
     // 
     void setIndex(const vertex_id_t& node_ID_u, const index_t& index_num, const vertex_id_t& node_ID_v);
 
+    // debug 用
+    // void printList();
+    uint32_t getSize();
+
 private : 
 
     std::vector<std::unordered_map<index_t, vertex_id_t>> cache_;
@@ -84,4 +88,8 @@ inline void SimpleCache::setIndex(const vertex_id_t& node_ID_u, const index_t& i
             }
         }
     }
+}
+
+inline uint32_t SimpleCache::getSize() {
+    return cache_size_;
 }

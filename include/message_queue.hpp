@@ -36,6 +36,24 @@ public :
         }
     }
 
+    void push(std::vector<std::unique_ptr<RandomWalker>>& RWer_ptr_vec) {
+        { // 排他制御
+            std::lock_guard<std::mutex> lk(mtx_message_queue_);
+
+            bool queue_empty = message_queue_.empty();
+
+            uint32_t vec_size = RWer_ptr_vec.size();
+            for (int i = 0; i < vec_size; i++) {
+                message_queue_.push(std::move(RWer_ptr_vec[i]));
+            }
+
+            if (queue_empty) { // 空キューでなくなった通知
+                cv_message_queue_.notify_all();
+            }
+
+        }
+    }
+
     // message_queue_ から message をまとめて取り出す
     // vector に格納
     // 入れた数を返す

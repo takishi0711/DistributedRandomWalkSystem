@@ -140,6 +140,9 @@ public :
     // 引数の path に path_ の情報を書き込む (各頂点にホストIDもつける), path_length に全経路長を書きこむ
     void getPath(uint16_t& path_length, std::vector<uint64_t>& path);
 
+    // デバッグ用, RWer の出力
+    void printRWer();
+
 
 private :
 
@@ -181,6 +184,31 @@ inline RandomWalker::RandomWalker(const uint64_t& source_node, const uint64_t& n
     path_[4] = 0; RWer_size_ += 8;
 
     decrementRWerLife();
+}
+
+inline RandomWalker::RandomWalker(const char* message) {
+    int idx = 0;
+    ver_id_ = *(uint8_t*)(message + idx); idx += 1;
+    flag_ = *(uint8_t*)(message + idx); idx += 1;
+    RWer_size_ = *(uint16_t*)(message + idx); idx += 2;
+    RWer_id_ = *(uint32_t*)(message + idx); idx += 4;
+    RWer_life_ = *(uint16_t*)(message + idx); idx += 2;
+    path_length_at_current_host_ = *(uint16_t*)(message + idx); idx += 2;
+    reserved_ = *(uint32_t*)(message + idx); idx += 4;
+    next_index_ = *(uint64_t*)(message + idx); idx += 8;
+
+    // debug
+    // std::cout << "getRequiredPathSize() = " << getRequiredPathSize() << std::endl;
+
+    path_.resize(getRequiredPathSize());
+    int last_idx = getNextIndexOfPath() - 1;
+    for (int i = 0; i <= last_idx; i++) {
+        path_[i] = *(uint64_t*)(message + idx); idx += 8;
+    }
+}
+
+inline RandomWalker::RandomWalker(const uint32_t dummy) {
+    setMessageID(DUMMY);
 }
 
 inline void RandomWalker::setMessageID(const uint8_t& id) {
@@ -382,4 +410,33 @@ inline void RandomWalker::getPath(uint16_t& path_length, std::vector<uint64_t>& 
             path.push_back(path_[idx++]); // indexvu
         } 
     }
+}
+
+inline void RandomWalker::printRWer() {
+    std::cout << "ver_id_: " << std::bitset<8>(ver_id_) << std::endl;
+    std::cout << "flag_: " << std::bitset<8>(flag_) << std::endl;
+    std::cout << "RWer_size_: " << RWer_size_ << std::endl;
+    std::cout << "RWer_id_: " << RWer_id_ << std::endl;
+    std::cout << "RWer_life_: " << RWer_life_ << std::endl;
+    std::cout << "path_length_at_current_host_: " << path_length_at_current_host_ << std::endl;
+    std::cout << "reserved_: " << reserved_ << std::endl;
+    std::cout << "next_index_: " << next_index_ << std::endl;
+    uint16_t path__length = (RWer_size_ - 8 - 8 - 8) / 8;
+    std::cout << "path__length: " << path__length << std::endl;
+    int idx = 0;
+    while (idx < path__length) {
+        // HostID, 同一ホスト内の歩長を抜き出す
+        uint64_t host_id; uint16_t length;
+        uint8_t send_flag = path_[idx]&1;
+        getHostIDAndLengthInPath(path_[idx++], host_id, length);
+        printf("{%ld, %d, %d}, ", host_id, length, send_flag);
+        for (int i = 0; i < length; i++) {
+            // printf("(%ld, %ld, %ld, %ld), ", path_[idx++], path_[idx++], path_[idx++], path_[idx++]);
+            printf("(%ld, %ld, %ld, %ld), ", path_[idx+0], path_[idx+1], path_[idx+2], path_[idx+3]);
+            idx += 4;
+        }
+        std::cout << std::endl;
+    }
+
+    for (int i = 0; i < 3; i++) std::cout << std::endl;
 }
