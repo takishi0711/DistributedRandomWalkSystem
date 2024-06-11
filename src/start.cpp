@@ -15,7 +15,7 @@ int main(int argc, char *argv[]) {
 
     // 実験結果を書き込むファイル名受付
     std::string filename;
-    std::cout << "ファイル名？" << std::endl;
+    std::cout << "結果出力先ファイル名？" << std::endl;
     std::cin >> filename;
 
     std::string filename_time = "../output/" + filename + "_time.txt";
@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
 
     // RW 実行回数受付
     int32_t RW_num = 0;
-    std::cout << "RW実行回数？(1 worker あたりの)" << std::endl;
+    std::cout << "RW実行回数？(1 頂点あたりの)" << std::endl;
     std::cin >> RW_num;
 
     // 待機時間

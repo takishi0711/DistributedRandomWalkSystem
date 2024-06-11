@@ -3,6 +3,7 @@
 #include <random>
 
 #include "util.hpp"
+#include "../config/param.hpp"
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
@@ -26,7 +27,7 @@ public :
 
 private :
     uint32_t number_of_RW_execution_ = 10000; // RW の実行回数
-    double alpha_ = 0.15; // RW の終了確率
+    double alpha_ = ALPHA; // RW の終了確率
 
 };
 

@@ -38,7 +38,8 @@ bool MAIN_EX = true;
 ////////////////////////////////////////////////////
 // 自分で設定
 
-
+// RW の α
+const double ALPHA = 0.15;
 
 // データ構造の初期化用 (全グラフの頂点数の数よりも大きく設定する)
 // 実装簡易化のために配列のサイズを先に指定する
@@ -46,11 +47,17 @@ bool MAIN_EX = true;
 // その場合 unordered_map 等を使ってグラフデータの管理を行うことになる
 const uint64_t VERTEX_SIZE = 5000000;
 
-// キャッシュサイズの最大値
-const uint32_t MAX_CACHE_SIZE = 50000000;
+// 「cacheエッジ数 + 元々持ってるエッジ数」の最大値
+const uint32_t MAX_CACHE_SIZE = 200;
 
 // cache 用の実行における RWer の最大生成数
-const uint64_t MAX_RWER_NUM_FOR_CACHE = 1000000000; 
+const uint64_t MAX_RWER_NUM_FOR_CACHE = 100000; 
+
+// RW の実行ステップ (RW_STEP 回実行するごとに少しスリープ) 
+const uint32_t RW_STEP = 500000; // cache 補充用の実行
+
+// RWer 生成の sleep 時間 (s)
+const uint32_t GENERATE_SLEEP_TIME = 4; // cache 補充用の実行
 
 // message 処理スレッドの数
 uint32_t PROC_MESSAGE_THREAD_NUM = 15; // メイン実行用
@@ -65,12 +72,6 @@ const uint32_t RECV_PORT = 4;
 // RWer 生成スレッド数
 const uint32_t GENERATE_RWER_THREAD_NUM = 15; // メイン実行用
 const uint32_t GENERATE_RWER_CACHE_THREAD_NUM = 4; // cache 補充用の実行
-
-// RW の実行ステップ (RW_STEP 回実行するごとに少しスリープ) 
-const uint32_t RW_STEP = 500000; // cache 補充用の実行
-
-// RWer 生成の sleep 時間 (s)
-const uint32_t GENERATE_SLEEP_TIME = 4;
 
 // メッセージ長
 const uint32_t MESSAGE_MAX_LENGTH_SEND = 8950;

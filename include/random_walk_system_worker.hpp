@@ -191,7 +191,7 @@ inline void RandomWalkSystemWorker::start() {
     std::vector<std::thread> threads_sendMessage;
     for (int i = 0; i < SEND_QUEUE_NUM; i++) {
         if (i == hostid_) continue;
-        threads_sendMessage.emplace_back(std::thread(&RandomWalkSystemWorker::sendMessage, this, i));
+        threads_sendMessage.emplace_back(std::thread(&RandomWalkSystemWorker::sendMessage, this));
     }
 
     std::vector<std::thread> threads_receiveMessage;
@@ -227,7 +227,7 @@ inline void RandomWalkSystemWorker::generateRWerForMain() {
         std::cout << "GENERATE_RWER_THREAD_NUM: " << GENERATE_RWER_THREAD_NUM << std::endl;
 
         Timer timer;
-        #pragma omp parallel num_threads(GENERATE_RWER)
+        #pragma omp parallel num_threads(GENERATE_RWER_THREAD_NUM)
         {
             worker_id_t worker_id = omp_get_thread_num();
             StdRandNumGenerator gen = randgen[worker_id];
@@ -291,7 +291,7 @@ inline void RandomWalkSystemWorker::generateRWerForCache() {
 
     Timer timer;
     uint32_t RWer_id_all;
-    #pragma omp parallel num_threads(GENERATE_RWER_CACHE)
+    #pragma omp parallel num_threads(GENERATE_RWER_CACHE_THREAD_NUM)
     {
         worker_id_t worker_id = omp_get_thread_num();
         StdRandNumGenerator gen;
@@ -713,6 +713,10 @@ inline void RandomWalkSystemWorker::receiveMessage(const uint16_t& port_num) {
             CHECK_RWER_FLAG = true;
             CACHE_GEN_FLAG = true;
             start_cache_flag_.writeReady(true);
+
+        } else if ((ver_id & MASK_MESSEGEID) == END_EXP) { // 実験結果を送信
+
+            sendToStartManager();
 
         } else {
             perror("wrong id");
